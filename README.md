@@ -71,3 +71,16 @@ This command will generate cubes from the specified constraints file, using a de
 ## License
 
 This project is licensed under MIT license. See the LICENSE file for details.
+
+## Citation
+
+If you use AlphaMapleSAT in your research, please cite it as follows:
+
+```bibtex
+@article{jha2024alphamaplesat,
+  title={Alphamaplesat: An MCTS-based cube-and-conquer SAT solver for hard combinatorial problems},
+  author={Jha, Piyush and Li, Zhengyu and Lu, Zhengyang and Bright, Curtis and Ganesh, Vijay},
+  journal={arXiv preprint arXiv:2401.13770},
+  year={2024}
+}
+```
