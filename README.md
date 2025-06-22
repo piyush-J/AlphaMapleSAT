@@ -1,1 +1,1 @@
-# AlphaMapleSAT_CnC
+# AlphaMapleSAT-CnC
