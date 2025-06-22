@@ -1,0 +1,5 @@
+python-sat
+coloredlogs==15.0
+numpy<=1.25
+tqdm<=4.66
+wandb<=0.15
