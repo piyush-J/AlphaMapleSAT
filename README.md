@@ -11,7 +11,7 @@ virtualenv --no-download ams_env
 source ams_env/bin/activate
 cd alphamaplesat
 pip install --upgrade pip
-pip install -r requirements_cc.txt
+pip install -r requirements.txt
 ```
 
 ## Usage
