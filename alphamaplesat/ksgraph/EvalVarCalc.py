@@ -62,6 +62,10 @@ class MarchPysatPropagate:
         freevars = self.construct_freevars(BinaryImp)
         print(f"No. of free variables: {len(freevars)}")
 
+        if len(freevars) == 0:
+            print("Falling back to all variables as free variables")
+            freevars = list(range(1, self.m + 1)) # if no free variables, use all variables
+
         literals_pos = list(range(1, self.m+1))
         literals_neg = [-l for l in literals_pos]
         self.literals_all = literals_pos + literals_neg # we need this to always be the edge variables
