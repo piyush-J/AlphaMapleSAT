@@ -5,9 +5,10 @@ using namespace std;
  * Simplified C++ version of AlphaMapleSAT cubing.
  * This implementation focuses on argument parsing, CNF parsing,
  * a basic unit propagation based on the provided BCP routines,
- * and a depth-first search that explores variable assignments.
- * It does not implement the full MCTS algorithm but mimics the
- * cube generation logic of the Python tool.
+ * and a Monte Carlo Tree Search (MCTS) routine that explores
+ * variable assignments. The implementation is intentionally
+ * lightweight but demonstrates the core ideas behind the
+ * MCTS-based cubing strategy used in AlphaMapleSAT.
  */
 
 #include <cstdio>
@@ -214,30 +215,105 @@ struct Cube {
     std::vector<int> lits;
 };
 
-int node_count = 0;
+// ------------------------------------------------------------
+// Minimal MCTS implementation for exploring variable literals
+// ------------------------------------------------------------
 
-// Basic DFS that explores assignments up to depth/n_cutoff
-void dfs(std::vector<int>& path, int depth, int& count, Options& opt,
-         const std::vector<int>& vars, std::vector<Cube>& cubes) {
-    node_count++;
-    if ((opt.d_cutoff != -1 && depth >= opt.d_cutoff) ||
-        (opt.n_cutoff != -1 && (int)path.size() >= opt.n_cutoff)) {
-        cubes.push_back({path});
-        return;
+struct MCTSNode {
+    std::vector<int> path;   // literals assigned so far
+    MCTSNode* child[2] = {nullptr, nullptr};
+    double Q[2] = {0.0, 0.0};
+    int N[2] = {0, 0};
+    bool terminal = false;
+    int depth = 0;
+    MCTSNode(const std::vector<int>& p, int d, bool term)
+        : path(p), terminal(term), depth(d) {}
+};
+
+struct MCTS {
+    const std::vector<int>& vars;
+    const Options& opt;
+    double cpuct = 1.4;
+    MCTSNode* root;
+    int node_created = 0;
+
+    MCTS(const std::vector<int>& v, const Options& o)
+        : vars(v), opt(o) {
+        root = new MCTSNode({}, 0, is_terminal(0, {}));
+        node_created = 1;
     }
-    if (depth >= (int)vars.size()) {
-        cubes.push_back({path});
-        return;
+
+    bool is_terminal(int depth, const std::vector<int>& path) const {
+        if (opt.d_cutoff != -1 && depth >= opt.d_cutoff) return true;
+        if (opt.n_cutoff != -1 && (int)path.size() >= opt.n_cutoff) return true;
+        if (depth >= (int)vars.size()) return true;
+        return false;
     }
-    int var = vars[depth];
-    for (int val = 0; val < 2; ++val) {
-        int lit = val ? var : -var;
-        path.push_back(lit);
-        count++;
-        dfs(path, depth + 1, count, opt, vars, cubes);
-        path.pop_back();
+
+    double rollout(MCTSNode* node) const {
+        return (double)node->path.size();
     }
-}
+
+    void expand(MCTSNode* node) {
+        if (node->terminal) return;
+        int var = vars[node->depth];
+        for (int a = 0; a < 2; ++a) {
+            auto p = node->path;
+            int lit = a ? var : -var;
+            p.push_back(lit);
+            bool term = is_terminal(node->depth + 1, p);
+            node->child[a] = new MCTSNode(p, node->depth + 1, term);
+            node_created++;
+        }
+    }
+
+    double search(MCTSNode* node) {
+        if (node->terminal) {
+            return rollout(node);
+        }
+        if (node->child[0] == nullptr) {
+            expand(node);
+            return rollout(node);
+        }
+
+        int totalN = node->N[0] + node->N[1];
+        double bestU = -1e9;
+        int bestA = 0;
+        for (int a = 0; a < 2; ++a) {
+            double u = node->Q[a] + cpuct * sqrt((double)(totalN + 1e-6)) / (1 + node->N[a]);
+            if (u > bestU) {
+                bestU = u;
+                bestA = a;
+            }
+        }
+        double v = search(node->child[bestA]);
+        node->N[bestA]++;
+        node->Q[bestA] += (v - node->Q[bestA]) / node->N[bestA];
+        return v;
+    }
+
+    std::vector<int> run() {
+        for (int i = 0; i < opt.num_sims; ++i) search(root);
+        std::vector<int> best;
+        MCTSNode* node = root;
+        while (!node->terminal) {
+            int a = node->N[1] > node->N[0] ? 1 : 0;
+            if (node->child[a] == nullptr) {
+                int var = vars[node->depth];
+                auto p = node->path;
+                int lit_tmp = a ? var : -var;
+                p.push_back(lit_tmp);
+                bool term = is_terminal(node->depth + 1, p);
+                node->child[a] = new MCTSNode(p, node->depth + 1, term);
+                node_created++;
+            }
+            int lit = a ? vars[node->depth] : -vars[node->depth];
+            best.push_back(lit);
+            node = node->child[a];
+        }
+        return best;
+    }
+};
 
 // Score variables using propagation as in the provided snippet
 std::vector<int> preselect_vars(int M) {
@@ -292,14 +368,11 @@ int main(int argc, char** argv) {
     // Preselect variables using the heuristic
     std::vector<int> vars = preselect_vars(opt.m_vars);
 
-    // Simple DFS based cube generation
+    // MCTS based cube generation
     auto cubing_start = std::chrono::high_resolution_clock::now();
+    MCTS mcts(vars, opt);
     std::vector<Cube> cubes;
-    std::vector<int> path;
-    int count = 0;
-    for (int i = 0; i < opt.num_sims; ++i) {
-        dfs(path, 0, count, opt, vars, cubes);
-    }
+    cubes.push_back({mcts.run()});
     auto cubing_end = std::chrono::high_resolution_clock::now();
 
     if (!opt.out_file.empty()) {
@@ -313,7 +386,7 @@ int main(int argc, char** argv) {
 
     double cubing_time = std::chrono::duration<double>(cubing_end - cubing_start).count();
     printf("Time taken for cubing:  %.3f\n", cubing_time);
-    printf("Number of nodes:  %d\n", node_count);
+    printf("Number of nodes:  %d\n", mcts.node_created);
 
     double total_time = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - total_start).count();
     printf("Tool runtime:  %.3f\n", total_time);
