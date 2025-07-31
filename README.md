@@ -23,7 +23,33 @@ cd alphamaplesat
 python -u main.py "constraints_17_c_100000_2_2_0_final.simp" -d 1 -m 136 -o "test.cubes" -prod
 ```
 
-This command will generate cubes from the specified constraints file (provided as an example in the repo), using a depth of 1 and a maximum of 136 variables and outputting to `test.cubes`. 
+This command will generate cubes from the specified constraints file (provided as an example in the repo), using a depth of 1 and a maximum of 136 variables and outputting to `test.cubes`.
+
+## C++ cubing demo
+
+A lightweight C++ version of the cubing procedure is provided in `simple_mcts.cpp`.
+Compile it with a C++17 compiler:
+
+```bash
+g++ -std=c++17 -O2 simple_mcts.cpp -o simple_mcts
+```
+
+Run the tool on the sample CNF file:
+
+```bash
+./simple_mcts alphamaplesat/constraints_17_c_100000_2_2_0_final.simp -m 200 -o out.cubes -numMCTSSims 1
+```
+
+Typical output looks like:
+
+```
+200 variables will be considered for cubing
+No. of free variables: 100
+Saved cubes to file  out.cubes
+Time taken for cubing:  0.016
+Number of nodes:  3
+Tool runtime:  0.837
+```
 
 ## License
 
