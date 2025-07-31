@@ -54,6 +54,10 @@ static inline int lit_index(int lit) {
     return (lit > 0) ? lit : n_vars - lit;
 }
 
+static inline bool is_preselected(int var) {
+    return bimp_size[lit_index(var)] > 0 || bimp_size[lit_index(-var)] > 0;
+}
+
 static inline void reset_assignments() {
     memset(assignments, ASSIGN_NONE, sizeof(uint8_t) * (n_vars + 1));
     current_stamp++;
@@ -316,8 +320,8 @@ struct MCTS {
 };
 
 // Score variables using propagation as in the provided snippet
-std::vector<int> preselect_vars(int M) {
-    std::vector<int> selected;
+std::vector<std::pair<int,int>> preselect_vars(int M) {
+    std::vector<std::pair<int,int>> ranked;
     int scores[MAX_VARS + 1][2] = {0};
 
     for (int v = 1; v <= n_vars && v <= M; v++) {
@@ -336,21 +340,48 @@ std::vector<int> preselect_vars(int M) {
                        var_activity[v] * 5;
     }
 
-    std::vector<std::pair<int,int>> vec;
     for (int v = 1; v <= n_vars && v <= M; ++v) {
-        if (scores[v][1] > 0) vec.push_back({scores[v][1], v});
+        if (scores[v][1] > 0) ranked.push_back({v, scores[v][1]});
     }
-    std::sort(vec.begin(), vec.end(), std::greater<>());
-    for (auto &p : vec) selected.push_back(p.second);
-    return selected;
+    std::sort(ranked.begin(), ranked.end(), [](auto &a, auto &b){return a.second > b.second;});
+    return ranked;
 }
 
 int count_free_vars(int M) {
     int cnt = 0;
     for (int v = 1; v <= n_vars && v <= M; ++v) {
-        if (bimp_size[lit_index(v)] > 0 || bimp_size[lit_index(-v)] > 0) cnt++;
+        if (is_preselected(v)) cnt++;
     }
     return cnt;
+}
+
+std::vector<int> list_free_vars(int M) {
+    std::vector<int> lst;
+    for (int v = 1; v <= n_vars && v <= M; ++v) {
+        if (is_preselected(v)) lst.push_back(v);
+    }
+    return lst;
+}
+
+void enumerate_cubes_rec(const std::vector<int>& vars, int idx, std::vector<int>& cur,
+                         std::vector<Cube>& cubes) {
+    if (idx == (int)vars.size()) {
+        cubes.push_back({cur});
+        return;
+    }
+    int v = vars[idx];
+    cur.push_back(-v);
+    enumerate_cubes_rec(vars, idx + 1, cur, cubes);
+    cur.back() = v;
+    enumerate_cubes_rec(vars, idx + 1, cur, cubes);
+    cur.pop_back();
+}
+
+std::vector<Cube> generate_cubes(const std::vector<int>& vars) {
+    std::vector<Cube> cubes;
+    std::vector<int> cur;
+    enumerate_cubes_rec(vars, 0, cur, cubes);
+    return cubes;
 }
 
 int main(int argc, char** argv) {
@@ -360,34 +391,61 @@ int main(int argc, char** argv) {
         printf("CNF file not specified\n");
         return 1;
     }
+
+    auto io_start = std::chrono::high_resolution_clock::now();
     parse_cnf(opt.filename.c_str());
+    auto io_end = std::chrono::high_resolution_clock::now();
 
     printf("%d variables will be considered for cubing\n", opt.m_vars);
-    printf("No. of free variables: %d\n", count_free_vars(opt.m_vars));
+    auto free_vars = list_free_vars(opt.m_vars);
+    printf("No. of free variables: %zu\n", free_vars.size());
+    printf("Free variables:");
+    for (int v : free_vars) printf(" %d", v);
+    printf("\n");
 
-    // Preselect variables using the heuristic
-    std::vector<int> vars = preselect_vars(opt.m_vars);
+    auto score_start = std::chrono::high_resolution_clock::now();
+    auto ranked = preselect_vars(opt.m_vars);
+    auto score_end = std::chrono::high_resolution_clock::now();
 
-    // MCTS based cube generation
-    auto cubing_start = std::chrono::high_resolution_clock::now();
+    printf("Variable ranking (var:score):\n");
+    for (size_t i = 0; i < ranked.size(); ++i) {
+        printf("%zu. %d:%d\n", i+1, ranked[i].first, ranked[i].second);
+    }
+
+    std::vector<int> vars;
+    for (auto &p : ranked) vars.push_back(p.first);
+
+    auto mcts_start = std::chrono::high_resolution_clock::now();
     MCTS mcts(vars, opt);
-    std::vector<Cube> cubes;
-    cubes.push_back({mcts.run()});
-    auto cubing_end = std::chrono::high_resolution_clock::now();
+    auto best_path = mcts.run();
+    auto mcts_end = std::chrono::high_resolution_clock::now();
 
+    std::vector<int> abs_vars;
+    for (int lit : best_path) abs_vars.push_back(std::abs(lit));
+
+    auto cube_gen_start = std::chrono::high_resolution_clock::now();
+    std::vector<Cube> cubes = generate_cubes(abs_vars);
+    auto cube_gen_end = std::chrono::high_resolution_clock::now();
+
+    auto write_start = std::chrono::high_resolution_clock::now();
     if (!opt.out_file.empty()) {
         std::ofstream out(opt.out_file);
         for (auto &c : cubes) {
-            for (int lit : c.lits) out << lit << " ";
-            out << "0\n";
+            out << "a";
+            for (int lit : c.lits) out << " " << lit;
+            out << " 0\n";
         }
         printf("Saved cubes to file  %s\n", opt.out_file.c_str());
     }
+    auto write_end = std::chrono::high_resolution_clock::now();
 
-    double cubing_time = std::chrono::duration<double>(cubing_end - cubing_start).count();
-    printf("Time taken for cubing:  %.3f\n", cubing_time);
+    printf("Parsing time: %.3f\n", std::chrono::duration<double>(io_end - io_start).count());
+    printf("Scoring time: %.3f\n", std::chrono::duration<double>(score_end - score_start).count());
+    printf("MCTS time: %.3f\n", std::chrono::duration<double>(mcts_end - mcts_start).count());
+    printf("Cube gen time: %.3f\n", std::chrono::duration<double>(cube_gen_end - cube_gen_start).count());
+    printf("Write time: %.3f\n", std::chrono::duration<double>(write_end - write_start).count());
+
     printf("Number of nodes:  %d\n", mcts.node_created);
-
     double total_time = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - total_start).count();
     printf("Tool runtime:  %.3f\n", total_time);
 

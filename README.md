@@ -46,8 +46,15 @@ Typical output looks like:
 ```
 20 variables will be considered for cubing
 No. of free variables: 3
-Saved cubes to file  out.cubes
-Time taken for cubing:  0.000
+Free variables: 1 3 5
+Variable ranking (var:score):
+1. 5:323
+2. 3:200
+Parsing time: 0.001
+Scoring time: 0.002
+MCTS time: 0.001
+Cube gen time: 0.000
+Write time: 0.000
 Number of nodes:  23
 Tool runtime:  0.681
 ```
