@@ -189,6 +189,7 @@ struct Options {
     int m_vars = 0;
     std::string out_file;
     int num_sims = 10;
+    bool debug = false;
 };
 
 /** Parse command line arguments.
@@ -207,6 +208,8 @@ Options parse_args(int argc, char** argv) {
             opt.out_file = argv[++i];
         } else if (arg == "-numMCTSSims" && i+1 < argc) {
             opt.num_sims = atoi(argv[++i]);
+        } else if (arg == "-debug") {
+            opt.debug = true;
         } else if (arg[0] != '-') {
             opt.filename = arg;
         }
@@ -399,17 +402,20 @@ int main(int argc, char** argv) {
     printf("%d variables will be considered for cubing\n", opt.m_vars);
     auto free_vars = list_free_vars(opt.m_vars);
     printf("No. of free variables: %zu\n", free_vars.size());
-    printf("Free variables:");
-    for (int v : free_vars) printf(" %d", v);
-    printf("\n");
+    if (opt.debug) {
+        printf("Free variables:");
+        for (int v : free_vars) printf(" %d", v);
+        printf("\n");
+    }
 
     auto score_start = std::chrono::high_resolution_clock::now();
     auto ranked = preselect_vars(opt.m_vars);
     auto score_end = std::chrono::high_resolution_clock::now();
-
-    printf("Variable ranking (var:score):\n");
-    for (size_t i = 0; i < ranked.size(); ++i) {
-        printf("%zu. %d:%d\n", i+1, ranked[i].first, ranked[i].second);
+    if (opt.debug) {
+        printf("Variable ranking (var:score):\n");
+        for (size_t i = 0; i < ranked.size(); ++i) {
+            printf("%zu. %d:%d\n", i+1, ranked[i].first, ranked[i].second);
+        }
     }
 
     std::vector<int> vars;
@@ -438,18 +444,26 @@ int main(int argc, char** argv) {
         printf("Saved cubes to file  %s\n", opt.out_file.c_str());
     }
     auto write_end = std::chrono::high_resolution_clock::now();
+    double parse_time = std::chrono::duration<double>(io_end - io_start).count();
+    double score_time = std::chrono::duration<double>(score_end - score_start).count();
+    double mcts_time = std::chrono::duration<double>(mcts_end - mcts_start).count();
+    double cube_time = std::chrono::duration<double>(cube_gen_end - cube_gen_start).count();
+    double write_time = std::chrono::duration<double>(write_end - write_start).count();
+    if (opt.debug) {
+        printf("Parsing time: %.3f\n", parse_time);
+        printf("Scoring time: %.3f\n", score_time);
+        printf("MCTS time: %.3f\n", mcts_time);
+        printf("Cube gen time: %.3f\n", cube_time);
+        printf("Write time: %.3f\n", write_time);
+    }
 
-    printf("Parsing time: %.3f\n", std::chrono::duration<double>(io_end - io_start).count());
-    printf("Scoring time: %.3f\n", std::chrono::duration<double>(score_end - score_start).count());
-    printf("MCTS time: %.3f\n", std::chrono::duration<double>(mcts_end - mcts_start).count());
-    printf("Cube gen time: %.3f\n", std::chrono::duration<double>(cube_gen_end - cube_gen_start).count());
-    printf("Write time: %.3f\n", std::chrono::duration<double>(write_end - write_start).count());
+    double cubing_time = score_time + mcts_time + cube_time + write_time;
+    printf("Time taken for cubing:  %.3f\n", cubing_time);
 
     printf("Number of nodes:  %d\n", mcts.node_created);
     double total_time = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - total_start).count();
     printf("Tool runtime:  %.3f\n", total_time);
-
-    printf("Generated %zu cubes\n", cubes.size());
+    if (opt.debug) printf("Generated %zu cubes\n", cubes.size());
     return 0;
 }
 
