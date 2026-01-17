@@ -25,6 +25,46 @@ python -u main.py "constraints_17_c_100000_2_2_0_final.simp" -d 1 -m 136 -o "tes
 
 This command will generate cubes from the specified constraints file (provided as an example in the repo), using a depth of 1 and a maximum of 136 variables and outputting to `test.cubes`. 
 
+## Benchmarks Used in the Paper
+
+The following benchmarks were used in the experimental evaluation. Each benchmark includes a link to the corresponding repository or documentation and the command used to generate problem instances.
+
+### Kochen–Specker (SAT+CAS)
+
+* **Repository:** [MathCheck](https://github.com/BrianLi009/MathCheck)
+* **Instance generation:**
+
+```bash
+python gen_instance/generate.py n 0.5
+````
+
+### Ramsey R(8,3) (SAT+CAS)
+
+* **Repository:** [MathCheckRamsey](https://github.com/ConDug/MathCheckRamsey)
+* **Instance generation:**
+
+```bash
+./main.sh -n --deg-card totalizer --strict-degree-bound 28 8 3
+```
+
+### Kochen–Specker (SMS)
+
+* **Repository:** [sat-modulo-symmetries](https://github.com/markirch/sat-modulo-symmetries)
+* **Instance generation:**
+
+```bash
+python ./encodings/kochen_specker.py -v n
+```
+
+### Diameter-2 Critical Graphs (SMS)
+
+* **Documentation:** [PySMS GraphEncodingBuilder](https://sat-modulo-symmetries.readthedocs.io/en/latest/reference/#pysms.graph_builder.GraphEncodingBuilder.diameter2critical)
+* **Instance generation:**
+
+```bash
+python3 -m pysms.graph_builder --vertices 10 --diam2-critical --partial-sym-break
+```
+
 ## License
 
 This project is licensed under MIT license. See the LICENSE file for details.
@@ -41,3 +81,5 @@ If you use AlphaMapleSAT in your research, please cite it as follows:
   year={2024}
 }
 ```
+
+
