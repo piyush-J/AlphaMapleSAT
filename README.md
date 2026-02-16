@@ -36,7 +36,7 @@ g++ -std=c++17 -O2 simple_mcts.cpp -o simple_mcts
 ```
 
 Run the tool on the sample CNF file with a handful of search simulations. Pass
-`-debug` to see detailed timings and rankings:
+`-debug` to see detailed timings and rankings (rankings are printed only for free/preselected variables):
 
 ```bash
 ./simple_mcts alphamaplesat/constraints_17_c_100000_2_2_0_final.simp -m 20 -o out.cubes -numMCTSSims 2 -debug
@@ -56,6 +56,8 @@ Scoring time: 0.002
 MCTS time: 0.001
 Cube gen time: 0.000
 Write time: 0.000
+Accounted component time: 0.004
+Time taken for cubing:  0.003
 Number of nodes:  23
 Tool runtime:  0.681
 ```

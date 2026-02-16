@@ -322,12 +322,13 @@ struct MCTS {
     }
 };
 
-// Score variables using propagation as in the provided snippet
+// Score only "free" (preselected) variables using propagation.
 std::vector<std::pair<int,int>> preselect_vars(int M) {
     std::vector<std::pair<int,int>> ranked;
     int scores[MAX_VARS + 1][2] = {0};
 
     for (int v = 1; v <= n_vars && v <= M; v++) {
+        if (!is_preselected(v)) continue;
         std::vector<int> propagated;
         int pos = 0, neg = 0;
 
@@ -344,6 +345,7 @@ std::vector<std::pair<int,int>> preselect_vars(int M) {
     }
 
     for (int v = 1; v <= n_vars && v <= M; ++v) {
+        if (!is_preselected(v)) continue;
         if (scores[v][1] > 0) ranked.push_back({v, scores[v][1]});
     }
     std::sort(ranked.begin(), ranked.end(), [](auto &a, auto &b){return a.second > b.second;});
@@ -455,6 +457,8 @@ int main(int argc, char** argv) {
         printf("MCTS time: %.3f\n", mcts_time);
         printf("Cube gen time: %.3f\n", cube_time);
         printf("Write time: %.3f\n", write_time);
+        double accounted = parse_time + score_time + mcts_time + cube_time + write_time;
+        printf("Accounted component time: %.3f\n", accounted);
     }
 
     double cubing_time = score_time + mcts_time + cube_time + write_time;
@@ -466,4 +470,3 @@ int main(int argc, char** argv) {
     if (opt.debug) printf("Generated %zu cubes\n", cubes.size());
     return 0;
 }
-
