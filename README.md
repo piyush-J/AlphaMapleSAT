@@ -90,15 +90,22 @@ g++ -std=c++17 -O2 beam_lookahead.cpp -o beam_lookahead
 ./beam_lookahead alphamaplesat/constraints_17_c_100000_2_2_0_final.simp -m 20 -o out.cubes -debug
 ```
 
-Without `-debug`, only a concise summary is printed:
+Without `-debug`, beam lookahead prints a concise summary plus timing stats:
 
 ```
-20 variables will be considered for cubing
-No. of free variables: 3
+Beam-lookahead scoring on first 136 variables
+Top-3 variables on original formula:
+1) var=79 pos=26 neg=19 score=539.000
+2) var=80 pos=19 neg=26 score=539.000
+3) var=67 pos=71 neg=6 score=503.000
+
+Best variable after beam lookahead: x=67 updated_score=0.966605
 Saved cubes to file  out.cubes
-Time taken for cubing:  0.000
-Number of nodes:  23
-Tool runtime:  0.681
+Parse time: 0.522
+Initial scoring time: 1.973
+Lookahead time: 15.030
+Write time: 0.000
+Total runtime: 17.525
 ```
 
 ## License
