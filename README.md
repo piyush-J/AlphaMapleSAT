@@ -36,7 +36,7 @@ g++ -std=c++17 -O2 simple_mcts.cpp -o simple_mcts
 ```
 
 Run the tool on the sample CNF file with a handful of search simulations. Pass
-`-debug` to see detailed timings, per-simulation MCTS trace (UCT scores + chosen action), and rankings (rankings are printed only for free/preselected variables):
+`-debug` to see detailed timings, per-simulation MCTS trace (UCT details + rewards + chosen variable), and rankings (rankings are printed only for free/preselected variables):
 
 ```bash
 ./simple_mcts alphamaplesat/constraints_17_c_100000_2_2_0_final.simp -m 20 -o out.cubes -numMCTSSims 2 -debug
@@ -52,7 +52,7 @@ Variable ranking with normalization (var:raw:norm_raw:pos:neg:norm_pos:norm_neg)
 1. 5:323.000:1.000000:12:10:1.000000:0.833333
 2. 3:200.000:0.619195:7:8:0.583333:0.666667
 === MCTS simulation 1/2 ===
-[sim 1][depth 0] top actions by UCT (up to 3):
+[sim 1][depth 0] top actions by UCT (max 3 candidates):
 Parsing time: 0.001
 Scoring time: 0.002
 MCTS time: 0.001
