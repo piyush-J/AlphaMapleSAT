@@ -48,9 +48,11 @@ Typical debug output looks like:
 20 variables will be considered for cubing
 No. of free variables: 3
 Free variables: 1 3 5
-Variable ranking (var:score):
-1. 5:323
-2. 3:200
+Variable ranking with normalization (var:raw:norm_raw:pos:neg:norm_pos:norm_neg):
+1. 5:323.000:1.000000:12:10:1.000000:0.833333
+2. 3:200.000:0.619195:7:8:0.583333:0.666667
+=== MCTS simulation 1/2 ===
+[sim 1][depth 0] top actions by UCT (up to 3):
 Parsing time: 0.001
 Scoring time: 0.002
 MCTS time: 0.001

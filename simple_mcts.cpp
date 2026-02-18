@@ -238,100 +238,128 @@ struct MCTSNode {
 };
 
 struct MCTS {
-    const std::vector<int>& vars;
+    struct Node {
+        std::vector<int> chosen_vars;
+        std::vector<int> remaining_vars;
+        std::unordered_map<int, std::unique_ptr<Node>> child; // chosen var -> child node
+        std::unordered_map<int, double> Q; // action-value per variable
+        std::unordered_map<int, int> N;    // visit count per variable
+        int depth = 0;
+
+        Node(std::vector<int> chosen, std::vector<int> remaining, int d)
+            : chosen_vars(std::move(chosen)), remaining_vars(std::move(remaining)), depth(d) {}
+    };
+
     const Options& opt;
+    const std::unordered_map<int, std::pair<double,double>>& split_reward; // var -> (pos, neg)
     double cpuct = 1.4;
-    MCTSNode* root;
+    std::unique_ptr<Node> root;
     int node_created = 0;
 
-    MCTS(const std::vector<int>& v, const Options& o)
-        : vars(v), opt(o) {
-        root = new MCTSNode({}, 0, is_terminal(0, {}));
+    MCTS(const std::vector<int>& ranked_vars,
+         const Options& o,
+         const std::unordered_map<int, std::pair<double,double>>& rewards)
+        : opt(o), split_reward(rewards) {
+        root = std::make_unique<Node>(std::vector<int>{}, ranked_vars, 0);
         node_created = 1;
     }
 
-    bool is_terminal(int depth, const std::vector<int>& path) const {
-        if (opt.d_cutoff != -1 && depth >= opt.d_cutoff) return true;
-        if (opt.n_cutoff != -1 && (int)path.size() >= opt.n_cutoff) return true;
-        if (depth >= (int)vars.size()) return true;
+    bool is_terminal(const Node* node) const {
+        if (opt.d_cutoff != -1 && node->depth >= opt.d_cutoff) return true;
+        if (opt.n_cutoff != -1 && (int)node->chosen_vars.size() >= opt.n_cutoff) return true;
+        if (node->remaining_vars.empty()) return true;
         return false;
     }
 
-    double rollout(MCTSNode* node) const {
-        return (double)node->path.size();
+    static std::vector<int> remove_var(const std::vector<int>& xs, int v) {
+        std::vector<int> out;
+        out.reserve(xs.size());
+        for (int x : xs) if (x != v) out.push_back(x);
+        return out;
     }
 
-    void expand(MCTSNode* node, int sim_id, int trace_depth) {
-        if (node->terminal) return;
-        int var = vars[node->depth];
-        for (int a = 0; a < 2; ++a) {
-            auto p = node->path;
-            int lit = a ? var : -var;
-            p.push_back(lit);
-            bool term = is_terminal(node->depth + 1, p);
-            node->child[a] = new MCTSNode(p, node->depth + 1, term);
-            node_created++;
-            if (opt.debug) {
-                printf("[sim %d][depth %d] expand action=%d lit=%d terminal=%d\n",
-                       sim_id, trace_depth, a, lit, (int)term);
-            }
-        }
+    // Forest-style split reward for variable v: split on -v and +v, average both branches.
+    double action_reward(int v) const {
+        auto it = split_reward.find(v);
+        if (it == split_reward.end()) return 0.0;
+        return (it->second.first + it->second.second) / 2.0;
     }
 
-    double search(MCTSNode* node, int sim_id, int trace_depth = 0) {
-        if (node->terminal) {
-            double v = rollout(node);
-            if (opt.debug) {
-                printf("[sim %d][depth %d] terminal path_len=%zu value=%.3f\n",
-                       sim_id, trace_depth, node->path.size(), v);
-            }
-            return v;
-        }
-        if (node->child[0] == nullptr) {
-            expand(node, sim_id, trace_depth);
-            double v = rollout(node);
-            if (opt.debug) {
-                printf("[sim %d][depth %d] leaf rollout value=%.3f\n", sim_id, trace_depth, v);
-            }
-            return v;
+    std::vector<std::tuple<double,int,double,int>> rank_actions_by_uct(Node* node) {
+        std::vector<std::tuple<double,int,double,int>> scored; // uct, var, avg_reward, visits
+        scored.reserve(node->remaining_vars.size());
+
+        int totalN = 0;
+        for (int v : node->remaining_vars) totalN += node->N[v];
+
+        for (int v : node->remaining_vars) {
+            double q = node->Q[v];
+            int n = node->N[v];
+            double explore = cpuct * sqrt((double)(totalN + 1e-6)) / (1 + n);
+            double u = q + explore;
+            scored.push_back({u, v, action_reward(v), n});
         }
 
-        int totalN = node->N[0] + node->N[1];
-        std::vector<std::tuple<double,int,int,double>> scored; // u, action, lit, q
-        scored.reserve(2);
-        for (int a = 0; a < 2; ++a) {
-            int lit = a ? vars[node->depth] : -vars[node->depth];
-            double explore = cpuct * sqrt((double)(totalN + 1e-6)) / (1 + node->N[a]);
-            double u = node->Q[a] + explore;
-            scored.push_back({u, a, lit, node->Q[a]});
-        }
-        std::sort(scored.begin(), scored.end(), [](const auto& x, const auto& y) {
-            return std::get<0>(x) > std::get<0>(y);
+        std::sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) {
+            if (std::get<0>(a) != std::get<0>(b)) return std::get<0>(a) > std::get<0>(b);
+            return std::get<1>(a) < std::get<1>(b);
         });
+        return scored;
+    }
 
-        int bestA = std::get<1>(scored[0]);
+    double search(Node* node, int sim_id, int trace_depth = 0) {
+        if (is_terminal(node)) {
+            if (opt.debug) {
+                printf("[sim %d][depth %d] terminal chosen_vars=%zu value=0.000\n",
+                       sim_id, trace_depth, node->chosen_vars.size());
+            }
+            return 0.0;
+        }
+
+        auto scored = rank_actions_by_uct(node);
         if (opt.debug) {
-            printf("[sim %d][depth %d] top UCT choices (up to 3):\n", sim_id, trace_depth);
+            printf("[sim %d][depth %d] top actions by UCT (up to 3):\n", sim_id, trace_depth);
             for (size_t i = 0; i < scored.size() && i < 3; ++i) {
-                printf("  #%zu action=%d lit=%d UCT=%.6f Q=%.6f N=%d\n",
+                printf("  #%zu var=%d UCT=%.6f avg_split_rew=%.6f Q=%.6f N=%d\n",
                        i + 1,
                        std::get<1>(scored[i]),
-                       std::get<2>(scored[i]),
                        std::get<0>(scored[i]),
-                       std::get<3>(scored[i]),
-                       node->N[std::get<1>(scored[i])]);
+                       std::get<2>(scored[i]),
+                       node->Q[std::get<1>(scored[i])],
+                       std::get<3>(scored[i]));
             }
-            printf("[sim %d][depth %d] choose action=%d lit=%d\n",
-                   sim_id, trace_depth, bestA,
-                   bestA ? vars[node->depth] : -vars[node->depth]);
         }
 
-        double v = search(node->child[bestA], sim_id, trace_depth + 1);
-        node->N[bestA]++;
-        node->Q[bestA] += (v - node->Q[bestA]) / node->N[bestA];
+        int best_v = std::get<1>(scored[0]);
+        auto rewards = split_reward.at(best_v);
+        double split_avg = (rewards.first + rewards.second) / 2.0;
+
         if (opt.debug) {
-            printf("[sim %d][depth %d] backprop action=%d newQ=%.6f newN=%d value=%.3f\n",
-                   sim_id, trace_depth, bestA, node->Q[bestA], node->N[bestA], v);
+            printf("[sim %d][depth %d] choose var=%d, split rewards: -%d=>%.6f +%d=>%.6f avg=%.6f\n",
+                   sim_id, trace_depth, best_v, best_v, rewards.first, best_v, rewards.second, split_avg);
+        }
+
+        if (!node->child.count(best_v)) {
+            auto next_chosen = node->chosen_vars;
+            next_chosen.push_back(best_v);
+            auto next_remaining = remove_var(node->remaining_vars, best_v);
+            node->child[best_v] = std::make_unique<Node>(std::move(next_chosen), std::move(next_remaining), node->depth + 1);
+            node_created++;
+            if (opt.debug) {
+                printf("[sim %d][depth %d] expand child for var=%d -> child_depth=%d\n",
+                       sim_id, trace_depth, best_v, node->depth + 1);
+            }
+        }
+
+        double child_value = search(node->child[best_v].get(), sim_id, trace_depth + 1);
+        double v = (split_avg + child_value) / 2.0;
+
+        node->N[best_v]++;
+        node->Q[best_v] += (v - node->Q[best_v]) / node->N[best_v];
+
+        if (opt.debug) {
+            printf("[sim %d][depth %d] backprop var=%d newQ=%.6f newN=%d value=%.6f\n",
+                   sim_id, trace_depth, best_v, node->Q[best_v], node->N[best_v], v);
         }
         return v;
     }
@@ -339,42 +367,54 @@ struct MCTS {
     std::vector<int> run() {
         for (int i = 0; i < opt.num_sims; ++i) {
             if (opt.debug) printf("=== MCTS simulation %d/%d ===\n", i + 1, opt.num_sims);
-            double val = search(root, i + 1);
+            double val = search(root.get(), i + 1);
             if (opt.debug) {
-                printf("[sim %d] finished with value=%.3f rootN=(%d,%d) rootQ=(%.6f,%.6f)\n",
-                       i + 1, val, root->N[0], root->N[1], root->Q[0], root->Q[1]);
+                int total = 0;
+                for (int v : root->remaining_vars) total += root->N[v];
+                printf("[sim %d] finished value=%.6f root_total_visits=%d\n", i + 1, val, total);
             }
         }
-        std::vector<int> best;
-        MCTSNode* node = root;
-        while (!node->terminal) {
-            int a = node->N[1] > node->N[0] ? 1 : 0;
-            if (node->child[a] == nullptr) {
-                int var = vars[node->depth];
-                auto p = node->path;
-                int lit_tmp = a ? var : -var;
-                p.push_back(lit_tmp);
-                bool term = is_terminal(node->depth + 1, p);
-                node->child[a] = new MCTSNode(p, node->depth + 1, term);
-                node_created++;
+
+        std::vector<int> best_vars;
+        Node* node = root.get();
+        while (!is_terminal(node)) {
+            int best_v = -1;
+            int best_n = -1;
+            for (int v : node->remaining_vars) {
+                int n = node->N[v];
+                if (n > best_n) {
+                    best_n = n;
+                    best_v = v;
+                }
             }
-            int lit = a ? vars[node->depth] : -vars[node->depth];
-            best.push_back(lit);
-            node = node->child[a];
+            if (best_v == -1) break;
+            best_vars.push_back(best_v);
+            if (!node->child.count(best_v)) break;
+            node = node->child[best_v].get();
         }
+
         if (opt.debug) {
-            printf("Final best path by visit count:");
-            for (int lit : best) printf(" %d", lit);
+            printf("Final best variable sequence by visit count:");
+            for (int v : best_vars) printf(" %d", v);
             printf("\n");
         }
-        return best;
+        return best_vars;
     }
 };
 
 // Score only "free" (preselected) variables using propagation.
-std::vector<std::pair<int,int>> preselect_vars(int M) {
-    std::vector<std::pair<int,int>> ranked;
-    int scores[MAX_VARS + 1][2] = {0};
+struct VarScore {
+    int var = 0;
+    int pos = 0;
+    int neg = 0;
+    double raw_score = 0.0;
+    double norm_pos = 0.0;
+    double norm_neg = 0.0;
+    double norm_raw = 0.0;
+};
+
+std::vector<VarScore> preselect_vars(int M) {
+    std::vector<VarScore> ranked;
 
     for (int v = 1; v <= n_vars && v <= M; v++) {
         if (!is_preselected(v)) continue;
@@ -387,17 +427,29 @@ std::vector<std::pair<int,int>> preselect_vars(int M) {
         reset_assignments();
         if (unit_propagation(-v, propagated)) neg = propagated.size();
 
-        scores[v][0] = v;
-        scores[v][1] = pos * neg + 10 * (pos + neg) +
-                       100 * (bimp_size[lit_index(v)] + bimp_size[lit_index(-v)]) +
-                       var_activity[v] * 5;
+        double raw = (double)pos * (double)neg + 10.0 * (pos + neg) +
+                     100.0 * (bimp_size[lit_index(v)] + bimp_size[lit_index(-v)]) +
+                     5.0 * var_activity[v];
+
+        ranked.push_back({v, pos, neg, raw, 0.0, 0.0, 0.0});
     }
 
-    for (int v = 1; v <= n_vars && v <= M; ++v) {
-        if (!is_preselected(v)) continue;
-        if (scores[v][1] > 0) ranked.push_back({v, scores[v][1]});
+    int max_prop = 1;
+    double max_raw = 1.0;
+    for (const auto& s : ranked) {
+        max_prop = std::max(max_prop, std::max(s.pos, s.neg));
+        max_raw = std::max(max_raw, s.raw_score);
     }
-    std::sort(ranked.begin(), ranked.end(), [](auto &a, auto &b){return a.second > b.second;});
+
+    for (auto& s : ranked) {
+        s.norm_pos = (double)s.pos / (double)max_prop;
+        s.norm_neg = (double)s.neg / (double)max_prop;
+        s.norm_raw = s.raw_score / max_raw;
+    }
+
+    std::sort(ranked.begin(), ranked.end(), [](const VarScore &a, const VarScore &b) {
+        return a.norm_raw > b.norm_raw;
+    });
     return ranked;
 }
 
@@ -462,26 +514,30 @@ int main(int argc, char** argv) {
     auto score_start = std::chrono::high_resolution_clock::now();
     auto ranked = preselect_vars(opt.m_vars);
     auto score_end = std::chrono::high_resolution_clock::now();
+
+    std::vector<int> vars;
+    std::unordered_map<int, std::pair<double,double>> split_reward;
+    for (const auto& s : ranked) {
+        vars.push_back(s.var);
+        split_reward[s.var] = {s.norm_neg, s.norm_pos}; // (-v, +v)
+    }
+
     if (opt.debug) {
-        printf("Variable ranking (var:score):\n");
+        printf("Variable ranking with normalization (var:raw:norm_raw:pos:neg:norm_pos:norm_neg):\n");
         for (size_t i = 0; i < ranked.size(); ++i) {
-            printf("%zu. %d:%d\n", i+1, ranked[i].first, ranked[i].second);
+            const auto& s = ranked[i];
+            printf("%zu. %d:%.3f:%.6f:%d:%d:%.6f:%.6f\n",
+                   i + 1, s.var, s.raw_score, s.norm_raw, s.pos, s.neg, s.norm_pos, s.norm_neg);
         }
     }
 
-    std::vector<int> vars;
-    for (auto &p : ranked) vars.push_back(p.first);
-
     auto mcts_start = std::chrono::high_resolution_clock::now();
-    MCTS mcts(vars, opt);
-    auto best_path = mcts.run();
+    MCTS mcts(vars, opt, split_reward);
+    auto best_vars = mcts.run();
     auto mcts_end = std::chrono::high_resolution_clock::now();
 
-    std::vector<int> abs_vars;
-    for (int lit : best_path) abs_vars.push_back(std::abs(lit));
-
     auto cube_gen_start = std::chrono::high_resolution_clock::now();
-    std::vector<Cube> cubes = generate_cubes(abs_vars);
+    std::vector<Cube> cubes = generate_cubes(best_vars);
     auto cube_gen_end = std::chrono::high_resolution_clock::now();
 
     auto write_start = std::chrono::high_resolution_clock::now();
