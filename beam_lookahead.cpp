@@ -199,6 +199,7 @@ struct UpdatedSeedScore {
 };
 
 int main(int argc, char** argv) {
+    auto total_start = std::chrono::high_resolution_clock::now();
     bool debug = false;
     string filename;
     string out_file;
@@ -227,7 +228,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    auto parse_start = std::chrono::high_resolution_clock::now();
     parse_cnf(filename.c_str());
+    auto parse_end = std::chrono::high_resolution_clock::now();
     if (m == -1 || m > n_vars) m = n_vars;
 
     const double lambda = 0.5;
@@ -243,7 +246,9 @@ int main(int argc, char** argv) {
         printf("[debug] normalized combine: updated=(1-lambda)*S1_norm + lambda*S2_norm, lambda=%.2f\n", lambda);
     }
 
+    auto score_start = std::chrono::high_resolution_clock::now();
     auto ranked = rank_all_vars(m, {});
+    auto score_end = std::chrono::high_resolution_clock::now();
     vector<int> top3;
     for (int i = 0; i < 3 && i < (int)ranked.size(); ++i) top3.push_back(ranked[i].var);
 
@@ -256,6 +261,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    auto lookahead_start = std::chrono::high_resolution_clock::now();
     vector<UpdatedSeedScore> updated;
     for (int x : top3) {
         VarScore s1 = score_variable_under_base(x, {});
@@ -337,6 +343,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    auto lookahead_end = std::chrono::high_resolution_clock::now();
+
     int best_x = updated[0].seed_var;
     printf("\nBest variable after beam lookahead: x=%d updated_score=%.6f\n", best_x, updated[0].updated_score);
     if (debug) {
@@ -348,11 +356,25 @@ int main(int argc, char** argv) {
         }
     }
 
+    auto write_start = std::chrono::high_resolution_clock::now();
     ofstream out(out_file);
     out << "a " << -best_x << " 0\n";
     out << "a " << best_x << " 0\n";
     out.close();
+    auto write_end = std::chrono::high_resolution_clock::now();
     printf("Saved cubes to file  %s\n", out_file.c_str());
+
+    double parse_time = std::chrono::duration<double>(parse_end - parse_start).count();
+    double score_time = std::chrono::duration<double>(score_end - score_start).count();
+    double lookahead_time = std::chrono::duration<double>(lookahead_end - lookahead_start).count();
+    double write_time = std::chrono::duration<double>(write_end - write_start).count();
+    double total_time = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - total_start).count();
+
+    printf("Parse time: %.3f\n", parse_time);
+    printf("Initial scoring time: %.3f\n", score_time);
+    printf("Lookahead time: %.3f\n", lookahead_time);
+    printf("Write time: %.3f\n", write_time);
+    printf("Total runtime: %.3f\n", total_time);
 
     return 0;
 }
