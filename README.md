@@ -23,7 +23,57 @@ cd alphamaplesat
 python -u main.py "constraints_17_c_100000_2_2_0_final.simp" -d 1 -m 136 -o "test.cubes" -prod
 ```
 
-This command will generate cubes from the specified constraints file (provided as an example in the repo), using a depth of 1 and a maximum of 136 variables and outputting to `test.cubes`. 
+This command will generate cubes from the specified constraints file (provided as an example in the repo), using a depth of 1 and a maximum of 136 variables and outputting to `test.cubes`.
+
+## C++ cubing demo
+
+A lightweight C++ version of the cubing procedure is provided in `simple_mcts.cpp`.
+The program implements a tiny MCTS engine that selects variable assignments to
+form a cube. Compile it with a C++17 compiler:
+
+```bash
+g++ -std=c++17 -O2 simple_mcts.cpp -o simple_mcts
+```
+
+Run the tool on the sample CNF file with a handful of search simulations. Pass
+`-debug` to see detailed timings, per-simulation MCTS trace (UCT details + rewards + chosen variable), and rankings (rankings are printed only for free/preselected variables):
+
+```bash
+./simple_mcts alphamaplesat/constraints_17_c_100000_2_2_0_final.simp -m 20 -o out.cubes -numMCTSSims 2 -debug
+```
+
+Typical debug output looks like:
+
+```
+20 variables will be considered for cubing
+No. of free variables: 3
+Free variables: 1 3 5
+Variable ranking with normalization (var:raw:norm_raw:pos:neg:norm_pos:norm_neg):
+1. 5:323.000:1.000000:12:10:1.000000:0.833333
+2. 3:200.000:0.619195:7:8:0.583333:0.666667
+=== MCTS simulation 1/2 ===
+[sim 1][depth 0] top actions by UCT (max 3 candidates):
+Parsing time: 0.001
+Scoring time: 0.002
+MCTS time: 0.001
+Cube gen time: 0.000
+Write time: 0.000
+Accounted component time: 0.004
+Time taken for cubing:  0.003
+Number of nodes:  23
+Tool runtime:  0.681
+```
+
+Without `-debug`, only a concise summary is printed:
+
+```
+20 variables will be considered for cubing
+No. of free variables: 3
+Saved cubes to file  out.cubes
+Time taken for cubing:  0.000
+Number of nodes:  23
+Tool runtime:  0.681
+```
 
 ## Benchmarks Used in the Paper
 
