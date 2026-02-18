@@ -282,7 +282,7 @@ struct MCTS {
     }
 
     // Run BCP on the current sub-formula under a full assumption list and return
-    // normalized reward in [0, 1] as propagated_variables / n_vars.
+    // normalized reward in [0, 1] as propagated_variables / m.
     double evaluate_with_assumptions(const std::vector<int>& assumptions) const {
         reset_assignments();
         std::vector<int> propagated;
@@ -293,7 +293,7 @@ struct MCTS {
         }
         if (!propagate_big_clauses(propagated)) return 0.0;
 
-        return (double)propagated.size() / (double)std::max(1, n_vars);
+        return (double)propagated.size() / (double)std::max(1, opt.m_vars);
     }
 
     ActionEval evaluate_action(Node* node, int v) const {
@@ -351,8 +351,8 @@ struct MCTS {
             s.n = node->N[v];
             s.eval = evaluate_action(node, v);
             s.imm = s.eval.split_avg;
-            s.explore = cpuct * sqrt((double)(totalN + 1e-6)) / (1 + s.n);
-            s.uct = s.q + s.imm + s.explore;
+            s.explore = cpuct * s.imm * sqrt((double)(totalN + 1e-6)) / (1 + s.n);
+            s.uct = s.q + s.explore;
             scored.push_back(s);
         }
 
@@ -387,7 +387,7 @@ struct MCTS {
             printf("[sim %d][depth %d] top actions by UCT (max 3 candidates):\n", sim_id, trace_depth);
             for (size_t i = 0; i < scored.size(); ++i) {
                 const auto& s = scored[i];
-                printf("  #%zu var=%d UCT=%.6f [Q=%.6f + imm=%.6f + explore=%.6f] N=%d branches=%d\n",
+                printf("  #%zu var=%d UCT=%.6f [Q=%.6f + cpuct*P*sqrt(N)/(1+n), P=%.6f, explore=%.6f] N=%d branches=%d\n",
                        i + 1, s.var, s.uct, s.q, s.imm, s.explore, s.n, s.eval.branch_count);
                 printf("      rewards: +%d => %.6f, -%d => %.6f, split_avg=%.6f\n",
                        s.var, s.eval.pos_avg, s.var, s.eval.neg_avg, s.eval.split_avg);
@@ -490,9 +490,7 @@ std::vector<VarScore> preselect_vars(int M) {
         reset_assignments();
         if (unit_propagation(-v, propagated)) neg = propagated.size();
 
-        double raw = (double)pos * (double)neg + 10.0 * (pos + neg) +
-                     100.0 * (bimp_size[lit_index(v)] + bimp_size[lit_index(-v)]) +
-                     5.0 * var_activity[v];
+        double raw = (double)pos * (double)neg + (double)pos + (double)neg;
 
         ranked.push_back({v, pos, neg, raw, 0.0, 0.0, 0.0});
     }
