@@ -261,7 +261,7 @@ struct MCTS {
         return (double)node->path.size();
     }
 
-    void expand(MCTSNode* node) {
+    void expand(MCTSNode* node, int sim_id, int trace_depth) {
         if (node->terminal) return;
         int var = vars[node->depth];
         for (int a = 0; a < 2; ++a) {
@@ -271,36 +271,80 @@ struct MCTS {
             bool term = is_terminal(node->depth + 1, p);
             node->child[a] = new MCTSNode(p, node->depth + 1, term);
             node_created++;
+            if (opt.debug) {
+                printf("[sim %d][depth %d] expand action=%d lit=%d terminal=%d\n",
+                       sim_id, trace_depth, a, lit, (int)term);
+            }
         }
     }
 
-    double search(MCTSNode* node) {
+    double search(MCTSNode* node, int sim_id, int trace_depth = 0) {
         if (node->terminal) {
-            return rollout(node);
+            double v = rollout(node);
+            if (opt.debug) {
+                printf("[sim %d][depth %d] terminal path_len=%zu value=%.3f\n",
+                       sim_id, trace_depth, node->path.size(), v);
+            }
+            return v;
         }
         if (node->child[0] == nullptr) {
-            expand(node);
-            return rollout(node);
+            expand(node, sim_id, trace_depth);
+            double v = rollout(node);
+            if (opt.debug) {
+                printf("[sim %d][depth %d] leaf rollout value=%.3f\n", sim_id, trace_depth, v);
+            }
+            return v;
         }
 
         int totalN = node->N[0] + node->N[1];
-        double bestU = -1e9;
-        int bestA = 0;
+        std::vector<std::tuple<double,int,int,double>> scored; // u, action, lit, q
+        scored.reserve(2);
         for (int a = 0; a < 2; ++a) {
-            double u = node->Q[a] + cpuct * sqrt((double)(totalN + 1e-6)) / (1 + node->N[a]);
-            if (u > bestU) {
-                bestU = u;
-                bestA = a;
-            }
+            int lit = a ? vars[node->depth] : -vars[node->depth];
+            double explore = cpuct * sqrt((double)(totalN + 1e-6)) / (1 + node->N[a]);
+            double u = node->Q[a] + explore;
+            scored.push_back({u, a, lit, node->Q[a]});
         }
-        double v = search(node->child[bestA]);
+        std::sort(scored.begin(), scored.end(), [](const auto& x, const auto& y) {
+            return std::get<0>(x) > std::get<0>(y);
+        });
+
+        int bestA = std::get<1>(scored[0]);
+        if (opt.debug) {
+            printf("[sim %d][depth %d] top UCT choices (up to 3):\n", sim_id, trace_depth);
+            for (size_t i = 0; i < scored.size() && i < 3; ++i) {
+                printf("  #%zu action=%d lit=%d UCT=%.6f Q=%.6f N=%d\n",
+                       i + 1,
+                       std::get<1>(scored[i]),
+                       std::get<2>(scored[i]),
+                       std::get<0>(scored[i]),
+                       std::get<3>(scored[i]),
+                       node->N[std::get<1>(scored[i])]);
+            }
+            printf("[sim %d][depth %d] choose action=%d lit=%d\n",
+                   sim_id, trace_depth, bestA,
+                   bestA ? vars[node->depth] : -vars[node->depth]);
+        }
+
+        double v = search(node->child[bestA], sim_id, trace_depth + 1);
         node->N[bestA]++;
         node->Q[bestA] += (v - node->Q[bestA]) / node->N[bestA];
+        if (opt.debug) {
+            printf("[sim %d][depth %d] backprop action=%d newQ=%.6f newN=%d value=%.3f\n",
+                   sim_id, trace_depth, bestA, node->Q[bestA], node->N[bestA], v);
+        }
         return v;
     }
 
     std::vector<int> run() {
-        for (int i = 0; i < opt.num_sims; ++i) search(root);
+        for (int i = 0; i < opt.num_sims; ++i) {
+            if (opt.debug) printf("=== MCTS simulation %d/%d ===\n", i + 1, opt.num_sims);
+            double val = search(root, i + 1);
+            if (opt.debug) {
+                printf("[sim %d] finished with value=%.3f rootN=(%d,%d) rootQ=(%.6f,%.6f)\n",
+                       i + 1, val, root->N[0], root->N[1], root->Q[0], root->Q[1]);
+            }
+        }
         std::vector<int> best;
         MCTSNode* node = root;
         while (!node->terminal) {
@@ -317,6 +361,11 @@ struct MCTS {
             int lit = a ? vars[node->depth] : -vars[node->depth];
             best.push_back(lit);
             node = node->child[a];
+        }
+        if (opt.debug) {
+            printf("Final best path by visit count:");
+            for (int lit : best) printf(" %d", lit);
+            printf("\n");
         }
         return best;
     }
