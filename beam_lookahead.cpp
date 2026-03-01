@@ -5,6 +5,11 @@ using namespace std;
 #include <cstdlib>
 #include <cstring>
 #include <cstdint>
+#include <fstream>
+#include <vector>
+#include <algorithm>
+#include <chrono>
+#include <cmath>
 
 #define MAX_VARS 20000
 #define MAX_CLAUSES 1000000
@@ -20,6 +25,7 @@ int clause_stamp[MAX_CLAUSES];
 
 uint8_t assignments[MAX_VARS + 1];
 int current_stamp = 1;
+uint8_t is_unit_var[MAX_VARS + 1];
 
 int *bimp[MAX_VARS * 2 + 2];
 int bimp_size[MAX_VARS * 2 + 2];
@@ -33,6 +39,11 @@ static inline int lit_index(int lit) {
 static inline void reset_assignments() {
     memset(assignments, ASSIGN_NONE, sizeof(uint8_t) * (n_vars + 1));
     current_stamp++;
+}
+
+static inline bool is_preselected(int var) {
+    if (is_unit_var[var]) return false;  // Exclude unit clause variables
+    return bimp_size[lit_index(var)] > 0 || bimp_size[lit_index(-var)] > 0;
 }
 
 void add_bimp(int lit, int implied) {
@@ -54,6 +65,7 @@ void parse_cnf(const char *filename) {
         exit(1);
     }
 
+    memset(is_unit_var, 0, sizeof(is_unit_var));
     char line[10000];
     int clause_index = 0;
     while (fgets(line, sizeof(line), fp)) {
@@ -74,6 +86,9 @@ void parse_cnf(const char *filename) {
             clause_sizes[clause_index] = size;
             clause_stamp[clause_index] = 0;
 
+            if (size == 1) {
+                is_unit_var[abs(lits[0])] = 1;
+            }
             if (size == 2) {
                 add_bimp(-lits[0], lits[1]);
                 add_bimp(-lits[1], lits[0]);
@@ -181,7 +196,10 @@ VarScore score_variable_under_base(int var, const vector<int>& base_assumptions)
 
 vector<VarScore> rank_all_vars(int max_var, const vector<int>& base_assumptions) {
     vector<VarScore> out;
-    for (int v = 1; v <= max_var; ++v) out.push_back(score_variable_under_base(v, base_assumptions));
+    for (int v = 1; v <= max_var; ++v) {
+        if (!is_preselected(v)) continue;
+        out.push_back(score_variable_under_base(v, base_assumptions));
+    }
     sort(out.begin(), out.end(), [](const VarScore& a, const VarScore& b) {
         if (a.score != b.score) return a.score > b.score;
         return a.var < b.var;
@@ -232,6 +250,20 @@ int main(int argc, char** argv) {
     parse_cnf(filename.c_str());
     auto parse_end = std::chrono::high_resolution_clock::now();
     if (m == -1 || m > n_vars) m = n_vars;
+
+    // Count and list free variables
+    vector<int> free_vars;
+    for (int v = 1; v <= m; ++v) {
+        if (is_preselected(v)) {
+            free_vars.push_back(v);
+        }
+    }
+    printf("Number of free variables in first %d vars: %zu\n", m, free_vars.size());
+    if (debug) {
+        printf("[debug] Free variables (vars with binary implications):");
+        for (int v : free_vars) printf(" %d", v);
+        printf("\n");
+    }
 
     const double lambda = 0.5;
     const double gamma = 0.2;
