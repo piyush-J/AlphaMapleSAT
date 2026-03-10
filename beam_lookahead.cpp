@@ -21,7 +21,7 @@ using namespace std;
 int n_vars, n_clauses;
 int *clauses[MAX_CLAUSES];
 int clause_sizes[MAX_CLAUSES];
-int clause_stamp[MAX_CLAUSES];
+int watched[MAX_CLAUSES][2];  // Two watched literal indices per clause
 
 uint8_t assignments[MAX_VARS + 1];
 int current_stamp = 1;
@@ -32,8 +32,25 @@ int bimp_size[MAX_VARS * 2 + 2];
 int bimp_capacity[MAX_VARS * 2 + 2];
 int global_queue[MAX_VARS + 1];
 
+// Watch lists: for each literal, list of clause indices watching it
+vector<int> watch_list[MAX_VARS * 2 + 2];
+
 static inline int lit_index(int lit) {
     return (lit > 0) ? lit : n_vars - lit;
+}
+
+static inline bool is_lit_true(int lit) {
+    int var = abs(lit);
+    if (assignments[var] == ASSIGN_NONE) return false;
+    return (lit > 0 && assignments[var] == ASSIGN_TRUE) ||
+           (lit < 0 && assignments[var] == ASSIGN_FALSE);
+}
+
+static inline bool is_lit_false(int lit) {
+    int var = abs(lit);
+    if (assignments[var] == ASSIGN_NONE) return false;
+    return (lit > 0 && assignments[var] == ASSIGN_FALSE) ||
+           (lit < 0 && assignments[var] == ASSIGN_TRUE);
 }
 
 static inline void reset_assignments() {
@@ -84,7 +101,6 @@ void parse_cnf(const char *filename) {
             clauses[clause_index] = (int*)malloc(sizeof(int) * size);
             memcpy(clauses[clause_index], lits, sizeof(int) * size);
             clause_sizes[clause_index] = size;
-            clause_stamp[clause_index] = 0;
 
             if (size == 1) {
                 is_unit_var[abs(lits[0])] = 1;
@@ -93,6 +109,15 @@ void parse_cnf(const char *filename) {
                 add_bimp(-lits[0], lits[1]);
                 add_bimp(-lits[1], lits[0]);
             }
+            
+            // Initialize watched literals for clauses with size > 2
+            if (size > 2) {
+                watched[clause_index][0] = 0;
+                watched[clause_index][1] = 1;
+                watch_list[lit_index(lits[0])].push_back(clause_index);
+                watch_list[lit_index(lits[1])].push_back(clause_index);
+            }
+            
             clause_index++;
         }
     }
@@ -100,59 +125,89 @@ void parse_cnf(const char *filename) {
     fclose(fp);
 }
 
-int propagate_bimp(int lit, vector<int>& propagated) {
-    int front = 0, rear = 0;
-    global_queue[rear++] = lit;
-
-    while (front < rear) {
-        int l = global_queue[front++];
-        int var = abs(l);
-
-        if (assignments[var] != ASSIGN_NONE) {
-            if ((assignments[var] == ASSIGN_TRUE && l < 0) ||
-                (assignments[var] == ASSIGN_FALSE && l > 0)) {
-                return 0;
-            }
-            continue;
-        }
-
-        assignments[var] = (l > 0) ? ASSIGN_TRUE : ASSIGN_FALSE;
-        propagated.push_back(var);
-
-        int idx = lit_index(l);
-        for (int i = 0; i < bimp_size[idx]; i++) global_queue[rear++] = bimp[idx][i];
-    }
+int propagate_big_clauses(vector<int>& propagated) {
+    // For 2-watched literals, we don't iterate through all clauses
+    // Instead, we process the watch lists when literals become false
+    // This is handled in the main propagation loop
     return 1;
 }
 
-int propagate_big_clauses(vector<int>& propagated) {
-    for (int i = 0; i < n_clauses; i++) {
-        if (clause_sizes[i] <= 2 || clause_stamp[i] == current_stamp) continue;
-        clause_stamp[i] = current_stamp;
-
-        int *lits = clauses[i];
-        int sat = 0, unassigned = 0, last_unassigned = 0;
-
-        for (int j = 0; j < clause_sizes[i]; j++) {
+int update_watches_and_propagate(int false_lit, vector<int>& propagated, int& queue_rear) {
+    int lit_idx = lit_index(false_lit);
+    vector<int>& watches = watch_list[lit_idx];
+    
+    // Process all clauses watching this literal
+    for (size_t i = 0; i < watches.size(); ) {
+        int clause_idx = watches[i];
+        int *lits = clauses[clause_idx];
+        int size = clause_sizes[clause_idx];
+        
+        if (size <= 2) {
+            i++;
+            continue;
+        }
+        
+        // Find which watch position contains the false literal
+        int watch_pos = -1;
+        if (lits[watched[clause_idx][0]] == false_lit) {
+            watch_pos = 0;
+        } else if (lits[watched[clause_idx][1]] == false_lit) {
+            watch_pos = 1;
+        } else {
+            // This literal is no longer watched, skip
+            i++;
+            continue;
+        }
+        
+        int other_watch_pos = 1 - watch_pos;
+        int other_watch_lit = lits[watched[clause_idx][other_watch_pos]];
+        
+        // Check if other watch is satisfied
+        if (is_lit_true(other_watch_lit)) {
+            i++;
+            continue;
+        }
+        
+        // Try to find a new literal to watch
+        bool found_new_watch = false;
+        for (int j = 0; j < size; j++) {
+            if (j == watched[clause_idx][0] || j == watched[clause_idx][1]) continue;
+            
             int lit = lits[j];
-            int var = abs(lit);
-            if (assignments[var] == ASSIGN_NONE) {
-                unassigned++;
-                last_unassigned = lit;
-            } else if ((assignments[var] == ASSIGN_TRUE && lit > 0) ||
-                       (assignments[var] == ASSIGN_FALSE && lit < 0)) {
-                sat = 1;
+            if (!is_lit_false(lit)) {
+                // Found a new literal to watch
+                // Remove from current watch list
+                watches[i] = watches.back();
+                watches.pop_back();
+                
+                // Update watch and add to new watch list
+                watched[clause_idx][watch_pos] = j;
+                watch_list[lit_index(lit)].push_back(clause_idx);
+                found_new_watch = true;
                 break;
             }
         }
-
-        if (!sat && unassigned == 0) return 0;
-        if (!sat && unassigned == 1) {
-            int v = abs(last_unassigned);
-            assignments[v] = (last_unassigned > 0) ? ASSIGN_TRUE : ASSIGN_FALSE;
-            propagated.push_back(v);
+        
+        if (!found_new_watch) {
+            // Could not find new watch, check clause status
+            if (is_lit_false(other_watch_lit)) {
+                // Both watches are false - conflict
+                return 0;
+            } else {
+                // Other watch must be unassigned - unit clause
+                int var = abs(other_watch_lit);
+                if (assignments[var] == ASSIGN_NONE) {
+                    assignments[var] = (other_watch_lit > 0) ? ASSIGN_TRUE : ASSIGN_FALSE;
+                    propagated.push_back(var);
+                    global_queue[queue_rear++] = other_watch_lit;
+                }
+            }
+            i++;
         }
+        // Note: if found_new_watch is true, we don't increment i 
+        // because we've already swapped with the last element
     }
+    
     return 1;
 }
 
@@ -160,11 +215,53 @@ int propagate_with_assumptions(const vector<int>& assumptions, vector<int>& prop
     reset_assignments();
     propagated.clear();
 
+    int front = 0, rear = 0;
+    
+    // Add all assumptions to the queue
     for (int lit : assumptions) {
-        if (!propagate_bimp(lit, propagated)) return 0;
-        if (!propagate_big_clauses(propagated)) return 0;
+        int var = abs(lit);
+        if (assignments[var] != ASSIGN_NONE) {
+            if ((assignments[var] == ASSIGN_TRUE && lit < 0) ||
+                (assignments[var] == ASSIGN_FALSE && lit > 0)) {
+                return 0;
+            }
+            continue;
+        }
+        assignments[var] = (lit > 0) ? ASSIGN_TRUE : ASSIGN_FALSE;
+        propagated.push_back(var);
+        global_queue[rear++] = lit;
     }
-    if (!propagate_big_clauses(propagated)) return 0;
+
+    // Main propagation loop
+    while (front < rear) {
+        int lit = global_queue[front++];
+        
+        // Propagate binary implications
+        int idx = lit_index(lit);
+        for (int i = 0; i < bimp_size[idx]; i++) {
+            int implied = bimp[idx][i];
+            int var = abs(implied);
+            
+            if (assignments[var] != ASSIGN_NONE) {
+                if ((assignments[var] == ASSIGN_TRUE && implied < 0) ||
+                    (assignments[var] == ASSIGN_FALSE && implied > 0)) {
+                    return 0;
+                }
+                continue;
+            }
+            
+            assignments[var] = (implied > 0) ? ASSIGN_TRUE : ASSIGN_FALSE;
+            propagated.push_back(var);
+            global_queue[rear++] = implied;
+        }
+        
+        // Update watches for the negation of the assigned literal
+        int false_lit = -lit;
+        if (!update_watches_and_propagate(false_lit, propagated, rear)) {
+            return 0;
+        }
+    }
+    
     return 1;
 }
 
