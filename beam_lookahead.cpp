@@ -179,6 +179,9 @@ struct VarScore {
     int pos = 0;
     int neg = 0;
     double score = 0.0;
+    
+    VarScore() {}
+    VarScore(int v, int p, int n, double s) : var(v), pos(p), neg(n), score(s) {}
 };
 
 VarScore score_variable_under_base(int var, const vector<int>& base_assumptions) {
@@ -191,7 +194,7 @@ VarScore score_variable_under_base(int var, const vector<int>& base_assumptions)
     int neg = formula_score(minus);
 
     double score = (double)pos * (double)neg + (double)pos + (double)neg;
-    return {var, pos, neg, score};
+    return VarScore(var, pos, neg, score);
 }
 
 vector<VarScore> rank_all_vars(int max_var, const vector<int>& base_assumptions) {
@@ -214,17 +217,22 @@ struct UpdatedSeedScore {
     double s1_norm = 0.0;
     double s2_norm = 0.0;
     double updated_score = 0.0;
+    
+    UpdatedSeedScore() {}
+    UpdatedSeedScore(int v, double s1_val, double s2_bal, double s1n, double s2n, double upd)
+        : seed_var(v), s1(s1_val), s2_balanced(s2_bal), s1_norm(s1n), s2_norm(s2n), updated_score(upd) {}
 };
 
 int main(int argc, char** argv) {
     auto total_start = std::chrono::high_resolution_clock::now();
     bool debug = false;
+    bool lightweight = false;
     string filename;
     string out_file;
     int m = -1;
 
     if (argc < 2) {
-        printf("Usage: %s <cnf-file> -o <cube-file> [-m M] [-debug]\n", argv[0]);
+        printf("Usage: %s <cnf-file> -o <cube-file> [-m M] [-debug] [--lightweight]\n", argv[0]);
         return 1;
     }
 
@@ -236,13 +244,15 @@ int main(int argc, char** argv) {
             out_file = argv[++i];
         } else if (arg == "-debug") {
             debug = true;
+        } else if (arg == "--lightweight") {
+            lightweight = true;
         } else if (!arg.empty() && arg[0] != '-') {
             filename = arg;
         }
     }
 
     if (filename.empty() || out_file.empty()) {
-        printf("Usage: %s <cnf-file> -o <cube-file> [-m M] [-debug]\n", argv[0]);
+        printf("Usage: %s <cnf-file> -o <cube-file> [-m M] [-debug] [--lightweight]\n", argv[0]);
         return 1;
     }
 
@@ -293,7 +303,49 @@ int main(int argc, char** argv) {
         }
     }
 
+    int best_x;
+    double best_score;
     auto lookahead_start = std::chrono::high_resolution_clock::now();
+    
+    if (lightweight) {
+        // Lightweight mode: use depth-1 scoring only
+        if (ranked.empty()) {
+            printf("No variable candidates found.\n");
+            return 1;
+        }
+        best_x = ranked[0].var;
+        best_score = ranked[0].score;
+        auto lookahead_end = std::chrono::high_resolution_clock::now();
+        
+        printf("\n[Lightweight mode] Best variable from depth-1 scoring: x=%d score=%.3f\n", best_x, best_score);
+        if (debug) {
+            printf("[debug] Skipped depth-2 lookahead in lightweight mode\n");
+        }
+        
+        auto write_start = std::chrono::high_resolution_clock::now();
+        ofstream out(out_file);
+        out << "a " << -best_x << " 0\n";
+        out << "a " << best_x << " 0\n";
+        out.close();
+        auto write_end = std::chrono::high_resolution_clock::now();
+        printf("Saved cubes to file  %s\n", out_file.c_str());
+
+        double parse_time = std::chrono::duration<double>(parse_end - parse_start).count();
+        double score_time = std::chrono::duration<double>(score_end - score_start).count();
+        double lookahead_time = std::chrono::duration<double>(lookahead_end - lookahead_start).count();
+        double write_time = std::chrono::duration<double>(write_end - write_start).count();
+        double total_time = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - total_start).count();
+
+        printf("Parse time: %.3f\n", parse_time);
+        printf("Initial scoring time: %.3f\n", score_time);
+        printf("Lookahead time: %.3f\n", lookahead_time);
+        printf("Write time: %.3f\n", write_time);
+        printf("Total runtime: %.3f\n", total_time);
+        
+        return 0;
+    }
+    
+    // Full beam lookahead mode
     vector<UpdatedSeedScore> updated;
     for (int x : top3) {
         VarScore s1 = score_variable_under_base(x, {});
@@ -334,7 +386,7 @@ int main(int argc, char** argv) {
         double s2_mean = (s2_plus + s2_minus) / 2.0;
         double s2_balanced = s2_mean - gamma * fabs(s2_plus - s2_minus);
 
-        updated.push_back({x, s1.score, s2_balanced, 0.0, 0.0, 0.0});
+        updated.push_back(UpdatedSeedScore(x, s1.score, s2_balanced, 0.0, 0.0, 0.0));
 
         if (debug) {
             printf("\n[debug] depth summary for x=%d\n", x);
@@ -377,8 +429,9 @@ int main(int argc, char** argv) {
 
     auto lookahead_end = std::chrono::high_resolution_clock::now();
 
-    int best_x = updated[0].seed_var;
-    printf("\nBest variable after beam lookahead: x=%d updated_score=%.6f\n", best_x, updated[0].updated_score);
+    best_x = updated[0].seed_var;
+    best_score = updated[0].updated_score;
+    printf("\nBest variable after beam lookahead: x=%d updated_score=%.6f\n", best_x, best_score);
     if (debug) {
         printf("[debug] final ranking among top-3 seeds:\n");
         for (size_t i = 0; i < updated.size(); ++i) {
